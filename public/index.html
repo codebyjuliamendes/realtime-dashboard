@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Event-Driven Real-Time Dashboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <div id="perf-overlay">
+        <span>FPS: <span id="fps-counter">0</span></span>
+        <span>Msgs/sec: <span id="msg-rate">0</span></span>
+    </div>
+    
+    <header>
+        <div class="logo">
+            <div class="pulse-dot" id="connection-indicator"></div>
+            <h1>Nexus<span>Dash</span></h1>
+        </div>
+        <div class="status-bar" id="status-bar">
+            Connecting...
+        </div>
+    </header>
+
+    <main class="dashboard-grid">
+        <!-- Crypto Panel -->
+        <section class="panel glass-card" id="crypto-panel">
+            <h2>Crypto Markets (Real-time)</h2>
+            <div class="chart-container">
+                <canvas id="cryptoChart"></canvas>
+            </div>
+            <div class="crypto-stats">
+                <div class="stat-box">
+                    <span class="label">BTC/USD</span>
+                    <span class="value" id="btc-price">---</span>
+                </div>
+                <div class="stat-box">
+                    <span class="label">ETH/USD</span>
+                    <span class="value" id="eth-price">---</span>
+                </div>
+                <div class="stat-box">
+                    <span class="label">SOL/USD</span>
+                    <span class="value" id="sol-price">---</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- IoT Telemetry Panel -->
+        <section class="panel glass-card" id="iot-panel">
+            <h2>IoT Telemetry (High Frequency)</h2>
+            <div class="chart-container">
+                <canvas id="iotChart"></canvas>
+            </div>
+            <div class="iot-stats">
+                <div class="stat-box">
+                    <span class="label">Avg Temp</span>
+                    <span class="value" id="avg-temp">---</span>
+                </div>
+                <div class="stat-box">
+                    <span class="label">Avg CPU</span>
+                    <span class="value" id="avg-cpu">---</span>
+                </div>
+                <div class="stat-box warning-hidden" id="anomaly-alert">
+                    <span class="label">Anomaly Detected</span>
+                    <span class="value alert-text">High Temp</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- Event Log Table (Virtual Scrolling) -->
+        <section class="panel glass-card full-width" id="events-panel">
+            <h2>System Event Log (100k+ rows)</h2>
+            <div class="table-container">
+                <div class="table-header">
+                    <div class="col col-time">Timestamp</div>
+                    <div class="col col-type">Type</div>
+                    <div class="col col-details">Details</div>
+                </div>
+                <div class="viewport" id="table-viewport">
+                    <!-- Virtual Scroller will inject rows here -->
+                    <div class="scroll-content" id="table-scroll-content"></div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <script type="module" src="js/virtual-scroll.js"></script>
+    <script type="module" src="js/chart-setup.js"></script>
+    <script type="module" src="js/main.js"></script>
+</body>
+</html>
