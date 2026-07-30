@@ -25,6 +25,7 @@
         }
     </script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/lucide@latest"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         body {
@@ -61,6 +62,9 @@
         <span>FPS: <span id="fps-counter" class="text-green-400 font-bold">0</span></span>
         <span>Msgs/sec: <span id="msg-rate" class="text-blue-400 font-bold">0</span></span>
     </div>
+
+    <!-- Toast Container -->
+    <div id="toast-container" class="fixed bottom-4 right-4 flex flex-col gap-2 z-[9999]"></div>
     
     <!-- Header -->
     <header class="flex justify-between items-center p-6 border-b border-glass-border glass-card sticky top-0 z-40">
@@ -79,10 +83,13 @@
         <!-- Crypto Panel -->
         <section class="glass-card rounded-xl p-5 shadow-lg flex flex-col" id="crypto-panel">
             <h2 class="text-lg font-semibold text-white mb-4 flex items-center">
-                <svg class="w-5 h-5 mr-2 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"></path></svg>
+                <i data-lucide="bitcoin" class="w-5 h-5 mr-2 text-yellow-400"></i>
                 Crypto Markets (Real-time)
             </h2>
-            <div class="relative flex-grow min-h-[250px] mb-4">
+            <div id="crypto-skeleton" class="animate-pulse flex-grow mb-4 flex space-x-4">
+                <div class="flex-1 bg-slate-700/50 rounded-lg"></div>
+            </div>
+            <div class="relative flex-grow min-h-[250px] mb-4 hidden" id="crypto-content">
                 <canvas id="cryptoChart"></canvas>
             </div>
             <div class="grid grid-cols-3 gap-4 mt-auto">
@@ -104,10 +111,13 @@
         <!-- IoT Telemetry Panel -->
         <section class="glass-card rounded-xl p-5 shadow-lg flex flex-col" id="iot-panel">
             <h2 class="text-lg font-semibold text-white mb-4 flex items-center">
-                <svg class="w-5 h-5 mr-2 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"></path></svg>
+                <i data-lucide="activity" class="w-5 h-5 mr-2 text-cyan-400"></i>
                 IoT Telemetry (High Frequency)
             </h2>
-            <div class="relative flex-grow min-h-[250px] mb-4">
+            <div id="iot-skeleton" class="animate-pulse flex-grow mb-4 flex space-x-4">
+                <div class="flex-1 bg-slate-700/50 rounded-lg"></div>
+            </div>
+            <div class="relative flex-grow min-h-[250px] mb-4 hidden" id="iot-content">
                 <canvas id="iotChart"></canvas>
             </div>
             <div class="grid grid-cols-3 gap-4 mt-auto">
@@ -129,7 +139,7 @@
         <!-- Event Log Table (Virtual Scrolling) -->
         <section class="glass-card rounded-xl p-5 shadow-lg lg:col-span-2 flex flex-col" id="events-panel">
             <h2 class="text-lg font-semibold text-white mb-4 flex items-center">
-                <svg class="w-5 h-5 mr-2 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16"></path></svg>
+                <i data-lucide="list" class="w-5 h-5 mr-2 text-purple-400"></i>
                 System Event Log (100k+ rows)
             </h2>
             <div class="flex-grow flex flex-col overflow-hidden border border-slate-700 rounded-lg bg-slate-900/50">
@@ -152,5 +162,31 @@
     <script type="module" src="js/virtual-scroll.js"></script>
     <script type="module" src="js/chart-setup.js"></script>
     <script type="module" src="js/main.js"></script>
+    <script>
+        lucide.createIcons();
+        function showToast(message, type = 'success') {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            const icon = type === 'success' ? 'check-circle' : 'alert-circle';
+            const color = type === 'success' ? 'text-green-400' : 'text-red-400';
+            toast.className = `glass-card p-4 rounded-lg shadow-lg text-sm text-white flex items-center gap-3 transition-opacity duration-300`;
+            toast.innerHTML = `<i data-lucide="${icon}" class="w-5 h-5 ${color}"></i><span>${message}</span>`;
+            container.appendChild(toast);
+            lucide.createIcons();
+            setTimeout(() => {
+                toast.style.opacity = '0';
+                setTimeout(() => toast.remove(), 300);
+            }, 3000);
+        }
+
+        // Simulate metrics loading
+        setTimeout(() => {
+            document.getElementById('crypto-skeleton').classList.add('hidden');
+            document.getElementById('crypto-content').classList.remove('hidden');
+            document.getElementById('iot-skeleton').classList.add('hidden');
+            document.getElementById('iot-content').classList.remove('hidden');
+            showToast('Metrics loaded successfully!', 'success');
+        }, 2000);
+    </script>
 </body>
 </html>
