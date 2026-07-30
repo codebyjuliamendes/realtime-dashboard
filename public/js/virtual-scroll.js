@@ -43,21 +43,25 @@ export class VirtualScroller {
     
     createRow(item, top) {
         const div = document.createElement('div');
-        div.className = 'table-row';
+        div.className = 'absolute w-full grid grid-cols-12 gap-4 px-3 py-2 border-b border-slate-700/50 hover:bg-slate-800/50 text-sm transition-colors items-center';
         div.style.top = `${top}px`;
         div.style.height = `${this.rowHeight}px`;
         
         const timeCol = document.createElement('div');
-        timeCol.className = 'col col-time';
+        timeCol.className = 'col-span-3 text-slate-400 font-mono truncate';
         const d = new Date(item.timestamp);
         timeCol.textContent = d.toLocaleTimeString() + '.' + String(d.getMilliseconds()).padStart(3, '0');
         
         const typeCol = document.createElement('div');
-        typeCol.className = 'col col-type';
+        let typeClass = 'text-slate-200';
+        if (item.type === 'crypto') typeClass = 'text-yellow-400';
+        else if (item.type === 'telemetry') typeClass = 'text-cyan-400';
+        else if (item.type === 'alert') typeClass = 'text-red-400';
+        typeCol.className = `col-span-2 font-medium truncate ${typeClass}`;
         typeCol.textContent = item.type;
         
         const detailCol = document.createElement('div');
-        detailCol.className = 'col col-details';
+        detailCol.className = 'col-span-7 text-slate-300 truncate';
         detailCol.textContent = typeof item.data === 'object' ? JSON.stringify(item.data) : (item.message || '');
         
         div.appendChild(timeCol);
