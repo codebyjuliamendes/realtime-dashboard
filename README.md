@@ -18,7 +18,10 @@ NexusDash is a high-performance, real-time dashboard designed for rendering high
 - **Virtual Scrolling**: Silky-smooth rendering of 100k+ event logs without DOM bloat.
 - **Web Workers**: Offloads complex data transformations from the main thread, maintaining 60 FPS.
 - **Circuit Breakers**: Graceful degradation when external upstream APIs fail.
-- **Clean Architecture Backend**: Modular design prioritizing separation of concerns, easy testing, and scalability.
+- **Event Sourcing (SQLite)**: Immutable, append-only delta log persisting all system events via `node:sqlite`.
+- **WebSocket Backpressure**: Intelligent 50ms batching prevents client buffer bloat under intense data rates.
+- **Time-Travel UI**: Drag the history slider to instantly rewind the UI state to a previous point in time.
+- **Edge Analytics**: Web Worker performs on-the-fly Z-Score statistical anomaly detection for IoT metrics.
 
 ---
 
@@ -26,8 +29,8 @@ NexusDash is a high-performance, real-time dashboard designed for rendering high
 
 * **Frontend**: Vanilla JavaScript (ES6+), HTML5, Tailwind CSS (via CDN)
 * **Visuals**: Chart.js for responsive streaming charts
-* **Backend**: Node.js, Express, `ws` for WebSockets
-* **Architecture**: Clean Architecture, Error Middleware, Circuit Breakers
+* **Backend**: Node.js v24+, Express, `ws`, built-in `node:sqlite`
+* **Architecture**: V3 Event Sourcing, Backpressure Batching, Circuit Breakers
 
 ---
 
@@ -38,21 +41,26 @@ graph TD
     subgraph Frontend [Browser Application]
         UI[Tailwind UI + Chart.js]
         VS[Virtual Scroller]
-        WW[Web Worker]
+        WW[Web Worker (Z-Score Analytics)]
         WS_Client[WebSocket Client]
+        TimeTravel[Time-Travel Slider]
         
-        WS_Client -->|Raw Data| WW
+        WS_Client -->|Batched Data| WW
         WW -->|Processed Data| UI
         WS_Client -->|Events| VS
+        TimeTravel -->|Fetch History API| UI
     end
     
     subgraph Backend [Node.js Server]
         API[Express API]
-        WS_Server[WebSocket Server]
+        WS_Server[WebSocket Server (50ms Batching)]
+        EventStore[(SQLite Event Store)]
         CryptoSvc[Crypto Service]
         IoTSvc[IoT Service]
         CB[Circuit Breaker]
         
+        API --> EventStore
+        WS_Server --> EventStore
         API --> WS_Server
         CryptoSvc -->|Prices| WS_Server
         IoTSvc -->|Telemetry| WS_Server

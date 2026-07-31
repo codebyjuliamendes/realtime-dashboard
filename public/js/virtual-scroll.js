@@ -40,6 +40,15 @@ export class VirtualScroller {
     updateHeight() {
         this.content.style.height = `${this.data.length * this.rowHeight}px`;
     }
+
+    clearData() {
+        this.data = [];
+        this.visibleNodes.forEach(node => this.content.removeChild(node.el));
+        this.visibleNodes = [];
+        this.updateHeight();
+        this.scrollTop = 0;
+        this.viewport.scrollTop = 0;
+    }
     
     createRow(item, top) {
         const div = document.createElement('div');

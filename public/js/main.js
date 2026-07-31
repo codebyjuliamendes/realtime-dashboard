@@ -80,6 +80,37 @@ function init() {
         }
     };
 
+    // Time Travel Logic
+    const slider = document.getElementById('time-travel-slider');
+    const sliderDisplay = document.getElementById('time-travel-display');
+    
+    slider.addEventListener('input', async (e) => {
+        const val = parseInt(e.target.value);
+        if (val === 100) {
+            sliderDisplay.textContent = 'Live';
+            if (!ws || ws.readyState !== WebSocket.OPEN) connectWebSocket();
+        } else {
+            sliderDisplay.textContent = `-${100 - val}m`;
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.close();
+            }
+            // Fetch history from SQLite event sourcing delta log
+            try {
+                const now = Date.now();
+                const end = now - ((100 - val) * 60000);
+                const start = end - 60000; // 1 minute window
+                const res = await fetch(`/api/history?start=${start}&end=${end}`);
+                const json = await res.json();
+                if (json.status === 'success') {
+                    scroller.clearData && scroller.clearData(); // ensure we clear
+                    json.data.forEach(msg => handleMessage(msg));
+                }
+            } catch (err) {
+                console.error('Failed to fetch history:', err);
+            }
+        }
+    });
+
     connectWebSocket();
     requestAnimationFrame(renderLoop);
     setInterval(updateMetrics, 1000);
@@ -134,6 +165,14 @@ function connectWebSocket() {
 }
 
 function handleMessage(message) {
+    if (message.type === 'BATCH') {
+        message.events.forEach(ev => processSingleMessage(ev));
+        return;
+    }
+    processSingleMessage(message);
+}
+
+function processSingleMessage(message) {
     // 1. Add to virtual scroller (UI logic)
     scroller.appendData(message);
     

@@ -11,13 +11,26 @@ function calculateSMA(data, key, windowSize) {
     return (sum / slice.length).toFixed(2);
 }
 
-// Anomaly detection
+// Anomaly detection using Z-Score
 function detectAnomalies(data) {
-    if (data.length === 0) return null;
+    if (data.length < 10) return null; // Need enough data points for Z-Score
     const latest = data[data.length - 1].data;
     
-    if (latest.temperature > 32) return "High Temp";
-    if (latest.cpuUsage > 90) return "High CPU";
+    // Calculate for temperature
+    const temps = data.map(d => d.data.temperature);
+    const meanTemp = temps.reduce((a, b) => a + b, 0) / temps.length;
+    const stdDevTemp = Math.sqrt(temps.reduce((a, b) => a + Math.pow(b - meanTemp, 2), 0) / temps.length);
+    const zScoreTemp = stdDevTemp === 0 ? 0 : Math.abs((latest.temperature - meanTemp) / stdDevTemp);
+    
+    if (zScoreTemp > 3) return "High Temp Anomaly (Z-Score)";
+    
+    // Calculate for CPU
+    const cpus = data.map(d => d.data.cpuUsage);
+    const meanCpu = cpus.reduce((a, b) => a + b, 0) / cpus.length;
+    const stdDevCpu = Math.sqrt(cpus.reduce((a, b) => a + Math.pow(b - meanCpu, 2), 0) / cpus.length);
+    const zScoreCpu = stdDevCpu === 0 ? 0 : Math.abs((latest.cpuUsage - meanCpu) / stdDevCpu);
+
+    if (zScoreCpu > 3) return "High CPU Anomaly (Z-Score)";
     
     return null;
 }

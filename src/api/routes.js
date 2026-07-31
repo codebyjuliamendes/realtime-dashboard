@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { wsService } from '../services/websocketService.js';
+import { eventStore } from '../services/eventStore.js';
 
 const router = Router();
 
@@ -9,8 +10,14 @@ const router = Router();
  */
 router.get('/history', (req, res, next) => {
     try {
-        const limit = parseInt(req.query.limit) || 100;
-        const data = wsService.getHistory(limit);
+        const { start, end, limit } = req.query;
+        let data;
+        
+        if (start && end) {
+            data = eventStore.getHistory(parseInt(start), parseInt(end));
+        } else {
+            data = wsService.getHistory(parseInt(limit) || 100);
+        }
         
         res.json({
             status: 'success',

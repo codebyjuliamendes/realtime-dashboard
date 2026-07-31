@@ -1,4 +1,5 @@
 import { WebSocketServer, WebSocket } from 'ws';
+import { eventStore } from './eventStore.js';
 
 /**
  * @typedef {Object} SystemEvent
@@ -15,6 +16,11 @@ class WebSocketService {
         this.eventLog = [];
         this.MAX_LOG_SIZE = 100000;
         this.wss = null;
+        
+        // Backpressure batching
+        this.batchQueue = [];
+        this.batchIntervalMs = 50;
+        this.batchTimer = null;
     }
 
     /**
@@ -37,6 +43,8 @@ class WebSocketService {
                 console.error('WebSocket client error:', err);
             });
         });
+
+        this.batchTimer = setInterval(() => this._flushBatch(), this.batchIntervalMs);
     }
 
     /**
@@ -45,7 +53,24 @@ class WebSocketService {
      */
     broadcast(data) {
         if (!data.timestamp) data.timestamp = Date.now();
-        const payload = JSON.stringify(data);
+        
+        // Store in SQLite event sourcing
+        eventStore.append(data);
+        
+        // Queue for backpressure batching
+        this.batchQueue.push(data);
+        
+        this.eventLog.push(data);
+        if (this.eventLog.length > this.MAX_LOG_SIZE) {
+            this.eventLog.shift();
+        }
+    }
+
+    _flushBatch() {
+        if (this.batchQueue.length === 0) return;
+        
+        // Wrap in a BATCH event type
+        const payload = JSON.stringify({ type: 'BATCH', events: this.batchQueue });
         
         for (const client of this.clients) {
             if (client.readyState === WebSocket.OPEN) {
@@ -53,10 +78,7 @@ class WebSocketService {
             }
         }
         
-        this.eventLog.push(data);
-        if (this.eventLog.length > this.MAX_LOG_SIZE) {
-            this.eventLog.shift();
-        }
+        this.batchQueue = [];
     }
 
     /**
