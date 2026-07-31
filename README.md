@@ -98,6 +98,8 @@ graph TD
 ### Prerequisites
 - Node.js v16+
 - npm or yarn
+- Kubernetes (Minikube/Kind) for local K8s deployment
+- Docker
 
 ### Installation
 
@@ -119,7 +121,27 @@ graph TD
    *Alternatively, use `node server.js`*
 
 4. **View the Dashboard**:
-   Open your browser and navigate to `http://localhost:3000`.
+   Open your browser and navigate to `http://localhost:3001`.
+
+5. **View API Documentation**:
+   Navigate to `http://localhost:3001/api-docs` to access the Swagger UI.
+
+---
+
+## ☸️ Kubernetes Deployment
+
+This project includes Kubernetes manifests for easy deployment:
+
+```bash
+kubectl apply -f k8s/
+```
+This will deploy the dashboard with 2 replicas, a ClusterIP service, and an NGINX Ingress configuration.
+
+---
+
+## 🔄 CI/CD Pipeline
+
+A GitHub Actions workflow is included (`.github/workflows/ci-cd.yml`) which automatically runs tests and simulates a Docker build on push and pull requests to the `main` branch.
 
 ---
 

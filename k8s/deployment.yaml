@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: realtime-dashboard
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: realtime-dashboard
+  template:
+    metadata:
+      labels:
+        app: realtime-dashboard
+    spec:
+      containers:
+      - name: realtime-dashboard
+        image: realtime-dashboard:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 3001
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "250m"
+            memory: "256Mi"
+        readinessProbe:
+          httpGet:
+            path: /api/history
+            port: 3001
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /api/history
+            port: 3001
+          initialDelaySeconds: 15
+          periodSeconds: 20
