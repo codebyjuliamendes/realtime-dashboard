@@ -60,7 +60,8 @@ export function createApp({ config, logger, hub, store, getStatus, isReady }) {
                     'worker-src': ["'self'"],
                     'object-src': ["'none'"],
                     'frame-ancestors': ["'none'"],
-                    'upgrade-insecure-requests': config.nodeEnv === 'production' ? [] : null,
+                    // Not forced: plain-HTTP deployments (e.g. docker compose on localhost) must keep working.
+                    'upgrade-insecure-requests': null,
                 },
             },
             strictTransportSecurity: config.nodeEnv === 'production',
