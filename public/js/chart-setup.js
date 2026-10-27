@@ -1,113 +1,137 @@
-// Setup Chart.js with global defaults for dark theme
-Chart.defaults.color = '#8b9bb4';
-Chart.defaults.font.family = 'Inter';
-Chart.defaults.borderColor = 'rgba(255, 255, 255, 0.05)';
-Chart.defaults.elements.line.borderWidth = 2;
-Chart.defaults.elements.line.tension = 0.4;
-Chart.defaults.elements.point.radius = 0; // Hide points for performance
-Chart.defaults.animation = false; // We handle batch updates
+import { formatPrice, percentChange } from './format.js';
 
-export function initCryptoChart(ctx) {
-    return new Chart(ctx, {
+// Chart.js (UMD build, self-hosted at /vendor/chart.umd.min.js) defaults for the dark theme.
+Chart.defaults.color = '#94a3b8';
+Chart.defaults.font.family = 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
+Chart.defaults.borderColor = 'rgba(148, 163, 184, 0.12)';
+Chart.defaults.elements.line.borderWidth = 2;
+Chart.defaults.elements.line.tension = 0.3;
+Chart.defaults.elements.point.radius = 0;
+Chart.defaults.animation = false;
+
+export const COINS = [
+    { id: 'bitcoin', label: 'BTC', color: '#fbbf24' },
+    { id: 'ethereum', label: 'ETH', color: '#38bdf8' },
+    { id: 'solana', label: 'SOL', color: '#34d399' },
+];
+
+/**
+ * Crypto chart in % change since the first point of the visible window, so coins with
+ * very different prices share one readable axis. Tooltips show the actual price.
+ * @param {HTMLCanvasElement} canvas
+ */
+export function createCryptoChart(canvas, maxPoints = 60) {
+    /** @type {{ label: string, prices: (number | null)[], simulated: boolean }[]} */
+    let points = [];
+    const chart = new Chart(canvas, {
         type: 'line',
         data: {
             labels: [],
-            datasets: [
-                {
-                    label: 'BTC',
-                    borderColor: '#ffaa00',
-                    backgroundColor: 'rgba(255, 170, 0, 0.1)',
-                    fill: true,
-                    data: []
-                },
-                {
-                    label: 'ETH',
-                    borderColor: '#00d4ff',
-                    backgroundColor: 'rgba(0, 212, 255, 0.1)',
-                    fill: true,
-                    data: []
-                },
-                {
-                    label: 'SOL',
-                    borderColor: '#00ff88',
-                    backgroundColor: 'rgba(0, 255, 136, 0.1)',
-                    fill: true,
-                    data: []
-                }
-            ]
+            datasets: COINS.map((c) => ({ label: c.label, borderColor: c.color, backgroundColor: c.color, data: [] })),
         },
         options: {
             responsive: true,
             maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
             scales: {
-                x: {
-                    display: false // Hide x-axis labels for clean streaming look
-                },
+                x: { ticks: { maxTicksLimit: 6, maxRotation: 0, autoSkipPadding: 24 } },
                 y: {
                     position: 'right',
-                    grid: { color: 'rgba(255, 255, 255, 0.05)' }
-                }
+                    title: { display: true, text: '% change in window' },
+                    ticks: { callback: (v) => `${Number(v).toFixed(2)}%` },
+                },
             },
             plugins: {
-                legend: { position: 'top', align: 'end' },
-                tooltip: { mode: 'index', intersect: false }
+                legend: { position: 'top', align: 'end', labels: { boxWidth: 12 } },
+                tooltip: {
+                    callbacks: {
+                        label: (ctx) => {
+                            const p = points[ctx.dataIndex];
+                            const price = p?.prices[ctx.datasetIndex];
+                            const pct = typeof ctx.parsed.y === 'number' ? `${ctx.parsed.y.toFixed(2)}%` : '—';
+                            return `${ctx.dataset.label}: ${formatPrice(price, { simulated: p?.simulated })} (${pct})`;
+                        },
+                    },
+                },
             },
-            interaction: {
-                mode: 'nearest',
-                axis: 'x',
-                intersect: false
-            }
-        }
+        },
     });
+
+    function redraw() {
+        const base = COINS.map((_, i) => points.find((p) => p.prices[i] != null)?.prices[i] ?? null);
+        chart.data.labels = points.map((p) => p.label);
+        chart.data.datasets.forEach((ds, i) => {
+            ds.data = points.map((p) => {
+                const price = p.prices[i];
+                return price == null || base[i] == null ? null : percentChange(price, base[i]);
+            });
+        });
+        chart.update('none');
+    }
+
+    return {
+        /** @param {string} label @param {(number | null)[]} prices @param {boolean} simulated */
+        push(label, prices, simulated) {
+            points.push({ label, prices, simulated });
+            if (points.length > maxPoints) points = points.slice(-maxPoints);
+            redraw();
+        },
+        reset() {
+            points = [];
+            redraw();
+        },
+        get size() {
+            return points.length;
+        },
+    };
 }
 
-export function initIotChart(ctx) {
-    return new Chart(ctx, {
+/** @param {HTMLCanvasElement} canvas */
+export function createIotChart(canvas, maxPoints = 120) {
+    const chart = new Chart(canvas, {
         type: 'line',
         data: {
             labels: [],
             datasets: [
-                {
-                    label: 'Temp (°C)',
-                    borderColor: '#ff3366',
-                    data: []
-                },
-                {
-                    label: 'Humidity (%)',
-                    borderColor: '#00d4ff',
-                    data: []
-                },
-                {
-                    label: 'CPU (%)',
-                    borderColor: '#00ff88',
-                    data: []
-                }
-            ]
+                { label: 'Temp (°C)', borderColor: '#fb7185', backgroundColor: '#fb7185', data: [] },
+                { label: 'Humidity (%)', borderColor: '#38bdf8', backgroundColor: '#38bdf8', data: [] },
+                { label: 'CPU (%)', borderColor: '#34d399', backgroundColor: '#34d399', data: [] },
+            ],
         },
         options: {
             responsive: true,
             maintainAspectRatio: false,
-            scales: {
-                x: { display: false },
-                y: { min: 0, max: 100 }
-            },
-            plugins: {
-                legend: { position: 'top', align: 'end' }
-            }
-        }
+            interaction: { mode: 'index', intersect: false },
+            scales: { x: { display: false }, y: { min: 0, max: 100 } },
+            plugins: { legend: { position: 'top', align: 'end', labels: { boxWidth: 12 } } },
+        },
     });
-}
+    let dirty = false;
 
-export function updateChartData(chart, label, dataArr, maxPoints = 50) {
-    chart.data.labels.push(label);
-    chart.data.datasets.forEach((dataset, i) => {
-        dataset.data.push(dataArr[i]);
-    });
-    
-    if (chart.data.labels.length > maxPoints) {
-        chart.data.labels.shift();
-        chart.data.datasets.forEach((dataset) => {
-            dataset.data.shift();
-        });
-    }
+    return {
+        /** @param {string} label @param {number[]} values */
+        push(label, values) {
+            chart.data.labels.push(label);
+            chart.data.datasets.forEach((ds, i) => ds.data.push(values[i]));
+            if (chart.data.labels.length > maxPoints) {
+                chart.data.labels.shift();
+                chart.data.datasets.forEach((ds) => ds.data.shift());
+            }
+            dirty = true;
+        },
+        /** Called from the animation-frame loop; redraws at most once per frame. */
+        flush() {
+            if (!dirty) return;
+            dirty = false;
+            chart.update('none');
+        },
+        reset() {
+            chart.data.labels = [];
+            chart.data.datasets.forEach((ds) => (ds.data = []));
+            dirty = true;
+        },
+        get size() {
+            return chart.data.labels.length;
+        },
+    };
 }
