@@ -1,2 +1,21 @@
-node_modules/  
-.env 
+node_modules/
+.env
+.env.*
+!.env.example
+
+# runtime data (SQLite event store)
+data/
+*.db
+*.db-shm
+*.db-wal
+
+# build output
+public/css/
+coverage/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.log

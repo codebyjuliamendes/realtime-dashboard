@@ -1,75 +1,41 @@
-import express from 'express';
-import http from 'http';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import helmet from 'helmet';
-import cors from 'cors';
-import compression from 'compression';
+import { loadConfig } from './src/config.js';
+import { createLogger } from './src/logger.js';
+import { createRuntime } from './src/runtime.js';
 
-import apiRoutes from './src/api/routes.js';
-import { errorHandler } from './src/middlewares/errorHandler.js';
-import { wsService } from './src/services/websocketService.js';
-import { cryptoService } from './src/services/cryptoService.js';
-import { iotService } from './src/services/iotService.js';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-const app = express();
-const server = http.createServer(app);
-
-const PORT = process.env.PORT || 3001;
-
-// Middleware
+let config;
 try {
-    app.use(helmet());
-    app.use(cors());
-    app.use(compression());
+    config = loadConfig();
 } catch (error) {
-    console.error('Failed to apply security middlewares:', error);
+    console.error(error instanceof Error ? error.message : error);
+    process.exit(1);
 }
-app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public')));
 
-// Swagger API Docs
-app.get('/api-docs', (req, res) => {
-    res.send(`
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist/swagger-ui.css">
-      <title>API Documentation</title>
-    </head>
-    <body>
-      <div id="swagger-ui"></div>
-      <script src="https://unpkg.com/swagger-ui-dist/swagger-ui-bundle.js"></script>
-      <script>
-        window.onload = () => {
-          window.ui = SwaggerUIBundle({
-            url: '/swagger.json',
-            dom_id: '#swagger-ui',
-          });
-        };
-      </script>
-    </body>
-    </html>
-    `);
+const logger = createLogger(config);
+const runtime = createRuntime({ config, logger });
+
+/** @param {string} signal */
+async function shutdown(signal) {
+    logger.info({ signal }, 'shutdown requested');
+    try {
+        await runtime.stop();
+        process.exit(0);
+    } catch (err) {
+        logger.error({ err }, 'error during shutdown');
+        process.exit(1);
+    }
+}
+
+process.once('SIGTERM', () => void shutdown('SIGTERM'));
+process.once('SIGINT', () => void shutdown('SIGINT'));
+process.on('unhandledRejection', (reason) => {
+    logger.error({ err: reason }, 'unhandled promise rejection');
+});
+process.on('uncaughtException', (err) => {
+    logger.fatal({ err }, 'uncaught exception, exiting');
+    process.exit(1);
 });
 
-// Routes
-app.use('/api', apiRoutes);
-
-// Error Handling Middleware
-app.use(errorHandler);
-
-// Initialize WebSocket Service
-wsService.init(server);
-
-// Start Background Services
-cryptoService.start(10000); // Every 10 seconds
-iotService.start(250);      // Every 250ms
-
-// Start Server
-server.listen(PORT, () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+runtime.start().catch((err) => {
+    logger.fatal({ err }, 'failed to start server');
+    process.exit(1);
 });

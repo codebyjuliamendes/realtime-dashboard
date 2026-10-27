@@ -1,305 +1,419 @@
 import { VirtualScroller } from './virtual-scroll.js';
-import { initCryptoChart, initIotChart, updateChartData } from './chart-setup.js';
+import { COINS, createCryptoChart, createIotChart } from './chart-setup.js';
+import { BADGES, cryptoState, formatClock, formatMetric, formatPrice } from './format.js';
 
-// DOM Elements
-const connectionIndicator = document.getElementById('connection-indicator');
-const statusBar = document.getElementById('status-bar');
-const fpsCounter = document.getElementById('fps-counter');
-const msgRate = document.getElementById('msg-rate');
+const $ = (/** @type {string} */ id) => /** @type {HTMLElement} */ (document.getElementById(id));
 
-// Crypto DOM
-const btcPrice = document.getElementById('btc-price');
-const ethPrice = document.getElementById('eth-price');
-const solPrice = document.getElementById('sol-price');
+const el = {
+    dot: $('connection-dot'),
+    status: $('status-bar'),
+    notice: $('demo-notice'),
+    noticeText: $('demo-notice-text'),
+    cryptoBadge: $('crypto-badge'),
+    cryptoMeta: $('crypto-meta'),
+    cryptoEmpty: $('crypto-empty'),
+    cryptoEmptyText: $('crypto-empty-text'),
+    prices: [$('btc-price'), $('eth-price'), $('sol-price')],
+    iotBadge: $('iot-badge'),
+    iotEmpty: $('iot-empty'),
+    iotEmptyText: $('iot-empty-text'),
+    avgTemp: $('avg-temp'),
+    avgHumidity: $('avg-humidity'),
+    avgCpu: $('avg-cpu'),
+    anomalyTile: $('anomaly-tile'),
+    anomalyText: $('anomaly-text'),
+    logEmpty: $('log-empty'),
+    logCount: $('log-count'),
+    slider: /** @type {HTMLInputElement} */ ($('history-slider')),
+    sliderOutput: $('history-output'),
+    liveBtn: /** @type {HTMLButtonElement} */ ($('history-live')),
+    fps: $('fps-counter'),
+    rate: $('msg-rate'),
+    toasts: $('toast-container'),
+};
 
-// IoT DOM
-const avgTemp = document.getElementById('avg-temp');
-const avgCpu = document.getElementById('avg-cpu');
-const anomalyAlert = document.getElementById('anomaly-alert');
+const RECENT_LIMIT = 500;
 
-// Sub-systems
-let ws;
+const state = {
+    /** @type {'live' | 'history'} */
+    mode: 'live',
+    loadingRecent: false,
+    /** @type {any[]} live events received while the recent history is loading */
+    pending: [],
+    /** @type {{ crypto?: { source: 'coingecko' | 'demo' | 'off', lastError?: string | null, state?: string }, iot?: { source: 'simulated' | 'off' } }} */
+    sources: {},
+    /** @type {{ isSimulated: boolean, at: number } | null} */
+    lastPrice: null,
+    lastFetchFailed: false,
+    lastFetchError: '',
+    lastCryptoTs: 0,
+    iotSeen: false,
+    /** @type {AbortController | null} */
+    historyAbort: null,
+    /** @type {number | undefined} */
+    historyDebounce: undefined,
+    frames: 0,
+    events: 0,
+};
+
+/** @type {WebSocket | null} */
+let ws = null;
+let reconnectDelay = 1000;
+/** @type {number | undefined} */
 let reconnectTimer;
-let reconnectBackoff = 1000;
-let scroller;
-let cryptoChart, iotChart;
-const worker = new Worker('js/worker.js');
 
-// Metrics
-let frames = 0;
-let lastFpsTime = performance.now();
-let messagesReceived = 0;
-let lastMsgTime = performance.now();
+const scroller = new VirtualScroller($('table-viewport'), $('table-scroll-content'), 40, {
+    onCountChange: (count) => {
+        el.logCount.textContent = count.toLocaleString('en-US');
+        el.logEmpty.hidden = count > 0;
+    },
+});
+const cryptoChart = createCryptoChart(/** @type {HTMLCanvasElement} */ ($('crypto-chart')));
+const iotChart = createIotChart(/** @type {HTMLCanvasElement} */ ($('iot-chart')));
+const worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
 
-// Buffers for batch rendering
-let renderPending = false;
-let cryptoUpdate = null;
-let iotUpdate = null;
+worker.onmessage = (e) => {
+    if (e.data?.type !== 'IOT_STATS') return;
+    const p = e.data.payload;
+    el.avgTemp.textContent = formatMetric(p.avgTemp, '°C');
+    el.avgHumidity.textContent = formatMetric(p.avgHumidity, '%');
+    el.avgCpu.textContent = formatMetric(p.avgCpu, '%');
+    el.anomalyText.textContent = p.anomaly ?? 'None';
+    el.anomalyTile.classList.toggle('tile-alert', Boolean(p.anomaly));
+};
 
-function init() {
-    // Setup Virtual Scroller
-    const viewport = document.getElementById('table-viewport');
-    const content = document.getElementById('table-scroll-content');
-    scroller = new VirtualScroller(viewport, content, 44);
+// ---------------------------------------------------------------- rendering helpers
 
-    // Setup Charts
-    const cryptoCtx = document.getElementById('cryptoChart').getContext('2d');
-    cryptoChart = initCryptoChart(cryptoCtx);
-    
-    const iotCtx = document.getElementById('iotChart').getContext('2d');
-    iotChart = initIotChart(iotCtx);
-    
-    // Setup Drag and Drop for panels
-    const panels = document.querySelectorAll('.panel');
-    panels.forEach(panel => {
-        panel.draggable = true;
-        panel.addEventListener('dragstart', handleDragStart);
-        panel.addEventListener('dragover', handleDragOver);
-        panel.addEventListener('drop', handleDrop);
-        panel.addEventListener('dragenter', handleDragEnter);
-        panel.addEventListener('dragleave', handleDragLeave);
-    });
-    
-    // Setup Worker Listener
-    worker.onmessage = (e) => {
-        const { type, payload } = e.data;
-        if (type === 'CRYPTO_STATS') {
-            updateDOMText(btcPrice, payload.btc);
-            updateDOMText(ethPrice, payload.eth);
-            updateDOMText(solPrice, payload.sol);
-        } else if (type === 'IOT_STATS') {
-            updateDOMText(avgTemp, payload.avgTemp + ' °C');
-            updateDOMText(avgCpu, payload.avgCpu + ' %');
-            
-            if (payload.anomaly) {
-                anomalyAlert.classList.remove('warning-hidden');
-                anomalyAlert.querySelector('.alert-text').textContent = payload.anomaly;
-            } else {
-                anomalyAlert.classList.add('warning-hidden');
-            }
-        }
-    };
-
-    // Time Travel Logic
-    const slider = document.getElementById('time-travel-slider');
-    const sliderDisplay = document.getElementById('time-travel-display');
-    
-    slider.addEventListener('input', async (e) => {
-        const val = parseInt(e.target.value);
-        if (val === 100) {
-            sliderDisplay.textContent = 'Live';
-            if (!ws || ws.readyState !== WebSocket.OPEN) connectWebSocket();
-        } else {
-            sliderDisplay.textContent = `-${100 - val}m`;
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.close();
-            }
-            // Fetch history from SQLite event sourcing delta log
-            try {
-                const now = Date.now();
-                const end = now - ((100 - val) * 60000);
-                const start = end - 60000; // 1 minute window
-                const res = await fetch(`/api/history?start=${start}&end=${end}`);
-                const json = await res.json();
-                if (json.status === 'success') {
-                    scroller.clearData && scroller.clearData(); // ensure we clear
-                    json.data.forEach(msg => handleMessage(msg));
-                }
-            } catch (err) {
-                console.error('Failed to fetch history:', err);
-            }
-        }
-    });
-
-    connectWebSocket();
-    requestAnimationFrame(renderLoop);
-    setInterval(updateMetrics, 1000);
+/** @param {HTMLElement} node @param {keyof typeof BADGES | 'history'} kind */
+function setBadge(node, kind) {
+    const badge =
+        kind === 'history'
+            ? { text: 'History', className: 'border-violet-400/40 bg-violet-400/10 text-violet-200' }
+            : BADGES[kind];
+    node.textContent = badge.text;
+    node.className = `badge ${badge.className}`;
 }
 
-function updateDOMText(el, text) {
-    if (el.textContent !== text) {
-        el.textContent = text;
-        // Trigger flash animation
-        el.classList.remove('flash');
-        void el.offsetWidth; // trigger reflow
-        el.classList.add('flash');
+/** @param {string} text @param {'ok' | 'warn' | 'error' | 'info'} tone */
+function setStatus(text, tone) {
+    const tones = {
+        ok: ['bg-emerald-400', 'border-emerald-400/30 bg-emerald-400/10 text-emerald-300'],
+        warn: ['bg-amber-400', 'border-amber-400/30 bg-amber-400/10 text-amber-200'],
+        error: ['bg-red-500', 'border-red-400/30 bg-red-400/10 text-red-200'],
+        info: ['bg-violet-400', 'border-violet-400/30 bg-violet-400/10 text-violet-200'],
+    };
+    const [dot, pill] = tones[tone];
+    el.dot.className = `h-3 w-3 rounded-full ${dot}`;
+    el.status.className = `rounded-full border px-4 py-1.5 text-sm font-medium ${pill}`;
+    el.status.textContent = text;
+}
+
+/** @param {string} message @param {'error' | 'info'} [kind] */
+function toast(message, kind = 'error') {
+    const node = document.createElement('div');
+    node.setAttribute('role', kind === 'error' ? 'alert' : 'status');
+    node.className = `glass-card rounded-lg px-4 py-3 text-sm shadow-lg ${kind === 'error' ? 'text-red-100' : 'text-slate-100'}`;
+    node.textContent = message; // textContent: never interpret server text as HTML
+    el.toasts.appendChild(node);
+    setTimeout(() => node.remove(), 5000);
+}
+
+function renderSourceNotice() {
+    const cryptoDemo = state.sources.crypto?.source === 'demo';
+    const iotSim = state.sources.iot?.source !== 'off';
+    if (cryptoDemo && iotSim) {
+        el.noticeText.textContent =
+            'crypto prices and sensor telemetry are produced by built-in simulators. They are not market or device data.';
+    } else if (cryptoDemo) {
+        el.noticeText.textContent = 'crypto prices are produced by a built-in simulator. They are not market data.';
+    } else if (iotSim) {
+        el.noticeText.textContent =
+            'sensor telemetry is produced by a built-in simulator. No physical device is connected.';
     }
+    el.notice.hidden = !cryptoDemo && !iotSim;
 }
 
-function connectWebSocket() {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}`;
-    
-    statusBar.textContent = 'Connecting...';
-    
-    ws = new WebSocket(wsUrl);
-    
-    ws.onopen = () => {
-        connectionIndicator.classList.remove('bg-red-500');
-        connectionIndicator.classList.add('bg-green-500', 'pulse-dot');
-        statusBar.textContent = 'Connected';
-        statusBar.className = 'px-4 py-1.5 rounded-full text-sm font-medium bg-green-500/10 text-green-400 border border-green-500/20';
-        reconnectBackoff = 1000;
-    };
-    
-    ws.onclose = () => {
-        connectionIndicator.classList.remove('bg-green-500', 'pulse-dot');
-        connectionIndicator.classList.add('bg-red-500');
-        statusBar.textContent = `Disconnected. Retrying in ${reconnectBackoff/1000}s...`;
-        statusBar.className = 'px-4 py-1.5 rounded-full text-sm font-medium bg-red-500/10 text-red-400 border border-red-500/20';
-        
-        clearTimeout(reconnectTimer);
-        reconnectTimer = setTimeout(connectWebSocket, reconnectBackoff);
-        reconnectBackoff = Math.min(reconnectBackoff * 1.5, 30000); // Max 30s
-    };
-    
-    ws.onerror = (err) => {
-        console.error('WebSocket error:', err);
-    };
-    
-    ws.onmessage = (e) => {
-        messagesReceived++;
-        const payload = JSON.parse(e.data);
-        handleMessage(payload);
-    };
-}
-
-function handleMessage(message) {
-    if (message.type === 'BATCH') {
-        message.events.forEach(ev => processSingleMessage(ev));
+function renderCryptoState() {
+    if (state.mode === 'history') {
+        setBadge(el.cryptoBadge, 'history');
+        el.cryptoMeta.textContent = state.lastPrice
+            ? `Recorded ${state.lastPrice.isSimulated ? 'simulated' : 'CoinGecko'} prices · last in window ${formatClock(state.lastPrice.at)}`
+            : 'Recorded prices for the selected window';
+        el.cryptoEmpty.hidden = cryptoChart.size > 0;
+        el.cryptoEmptyText.textContent = 'No crypto prices were recorded in this window.';
         return;
     }
-    processSingleMessage(message);
-}
-
-function processSingleMessage(message) {
-    // 1. Add to virtual scroller (UI logic)
-    scroller.appendData(message);
-    
-    // 2. Dispatch to worker for heavy lifting
-    if (message.type === 'CRYPTO') {
-        worker.postMessage({ type: 'PROCESS_CRYPTO', payload: message });
-        
-        // Queue chart update
-        const d = message.data;
-        cryptoUpdate = {
-            label: new Date(message.timestamp).toLocaleTimeString(),
-            data: [d.bitcoin?.usd || 0, d.ethereum?.usd || 0, d.solana?.usd || 0]
-        };
-    } else if (message.type === 'IOT') {
-        worker.postMessage({ type: 'PROCESS_IOT', payload: message });
-        
-        // Queue chart update
-        const d = message.data;
-        iotUpdate = {
-            label: new Date(message.timestamp).toLocaleTimeString(),
-            data: [d.temperature, d.humidity, d.cpuUsage]
-        };
-    }
-    
-    if (!renderPending) {
-        renderPending = true;
-        // Defer chart updates to next animation frame
-    }
-}
-
-// 60fps render loop
-function renderLoop() {
-    frames++;
-    
-    if (renderPending) {
-        if (cryptoUpdate) {
-            updateChartData(cryptoChart, cryptoUpdate.label, cryptoUpdate.data, 20);
-            cryptoChart.update();
-            cryptoUpdate = null;
-        }
-        
-        if (iotUpdate) {
-            updateChartData(iotChart, iotUpdate.label, iotUpdate.data, 50);
-            iotChart.update();
-            iotUpdate = null;
-        }
-        
-        renderPending = false;
-    }
-    
-    requestAnimationFrame(renderLoop);
-}
-
-function updateMetrics() {
-    const now = performance.now();
-    
-    // FPS
-    const deltaMs = now - lastFpsTime;
-    const currentFps = Math.round((frames * 1000) / deltaMs);
-    fpsCounter.textContent = currentFps;
-    frames = 0;
-    lastFpsTime = now;
-    
-    // Msg Rate
-    const msgDeltaMs = now - lastMsgTime;
-    const currentRate = Math.round((messagesReceived * 1000) / msgDeltaMs);
-    msgRate.textContent = currentRate;
-    messagesReceived = 0;
-    lastMsgTime = now;
-    
-    // Warn if FPS drops below 30
-    if (currentFps < 30) {
-        fpsCounter.style.color = '#ff3366';
-    } else {
-        fpsCounter.style.color = '#00ff88';
-    }
-}
-
-// Drag and drop state
-let draggedPanel = null;
-
-function handleDragStart(e) {
-    draggedPanel = this;
-    e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/html', this.innerHTML);
-    this.style.opacity = '0.4';
-}
-
-function handleDragOver(e) {
-    if (e.preventDefault) {
-        e.preventDefault(); 
-    }
-    e.dataTransfer.dropEffect = 'move';
-    return false;
-}
-
-function handleDragEnter(e) {
-    this.classList.add('over');
-}
-
-function handleDragLeave(e) {
-    this.classList.remove('over');
-}
-
-function handleDrop(e) {
-    if (e.stopPropagation) {
-        e.stopPropagation();
-    }
-    
-    if (draggedPanel !== this) {
-        // Simple swap logic
-        const parent = this.parentNode;
-        const draggedNext = draggedPanel.nextSibling === this ? draggedPanel : draggedPanel.nextSibling;
-        
-        parent.insertBefore(draggedPanel, this);
-        parent.insertBefore(this, draggedNext);
-    }
-    
-    return false;
-}
-
-document.addEventListener('dragend', (e) => {
-    document.querySelectorAll('.panel').forEach(p => {
-        p.style.opacity = '1';
-        p.classList.remove('over');
+    const s = cryptoState({
+        configuredSource: state.sources.crypto?.source,
+        lastPrice: state.lastPrice,
+        lastFetchFailed: state.lastFetchFailed,
+        now: Date.now(),
     });
-});
+    setBadge(el.cryptoBadge, s);
+    for (const node of el.prices) node.parentElement?.classList.toggle('tile-stale', s === 'stale');
 
-// Boot
-init();
+    const when = state.lastPrice ? formatClock(state.lastPrice.at) : null;
+    if (s === 'simulated') {
+        el.cryptoMeta.textContent = 'Source: demo price generator (synthetic values, not market prices)';
+    } else if (s === 'off') {
+        el.cryptoMeta.textContent = 'Crypto feed disabled on this server';
+    } else if (when) {
+        el.cryptoMeta.textContent = `Source: CoinGecko · price time ${when}${s === 'stale' ? ' (stale)' : ''}`;
+    } else {
+        el.cryptoMeta.textContent = 'Source: CoinGecko public API';
+    }
+
+    el.cryptoEmpty.hidden = cryptoChart.size > 0 && s !== 'off';
+    if (s === 'off') el.cryptoEmptyText.textContent = 'The crypto feed is disabled on this server.';
+    else if (s === 'unavailable')
+        el.cryptoEmptyText.textContent = `CoinGecko is unavailable (${state.lastFetchError || 'no response'}). No prices are shown until real data arrives.`;
+    else el.cryptoEmptyText.textContent = 'Waiting for the first price update from CoinGecko…';
+    el.cryptoEmpty.querySelector('.spinner')?.toggleAttribute('hidden', s !== 'waiting');
+}
+
+function renderIotState() {
+    if (state.mode === 'history') {
+        setBadge(el.iotBadge, 'history');
+        el.iotEmpty.hidden = iotChart.size > 0;
+        el.iotEmptyText.textContent = 'No telemetry was recorded in this window.';
+        return;
+    }
+    const off = state.sources.iot?.source === 'off';
+    setBadge(el.iotBadge, off ? 'off' : state.iotSeen ? 'simulated' : 'waiting');
+    el.iotEmpty.hidden = state.iotSeen && !off;
+    el.iotEmptyText.textContent = off
+        ? 'The telemetry simulator is disabled on this server.'
+        : 'Waiting for telemetry…';
+}
+
+// ---------------------------------------------------------------- event processing
+
+/** @param {any} ev */
+function processEvent(ev) {
+    if (!ev || typeof ev.type !== 'string' || typeof ev.timestamp !== 'number') return false;
+
+    if (ev.type === 'CRYPTO') {
+        if (ev.timestamp <= state.lastCryptoTs) return false; // already shown (snapshot/history overlap)
+        state.lastCryptoTs = ev.timestamp;
+        const prices = COINS.map((c) => (typeof ev.data?.[c.id]?.usd === 'number' ? ev.data[c.id].usd : null));
+        prices.forEach((p, i) => (el.prices[i].textContent = formatPrice(p, { simulated: ev.isSimulated })));
+        const sourceTimes = COINS.map((c) => ev.data?.[c.id]?.last_updated_at).filter(Number.isInteger);
+        const at = sourceTimes.length ? Math.max(...sourceTimes) * 1000 : ev.timestamp;
+        state.lastPrice = { isSimulated: Boolean(ev.isSimulated), at };
+        state.lastFetchFailed = false;
+        cryptoChart.push(formatClock(at), prices, Boolean(ev.isSimulated));
+    } else if (ev.type === 'SYSTEM_ERROR' && ev.source === 'coingecko') {
+        state.lastFetchFailed = true;
+        state.lastFetchError = String(ev.message ?? '').replace(/^Crypto prices unavailable \((.*)\)\..*$/, '$1');
+    } else if (ev.type === 'IOT') {
+        const d = ev.data ?? {};
+        worker.postMessage({ type: 'PROCESS_IOT', payload: ev });
+        iotChart.push(formatClock(ev.timestamp), [d.temperature, d.humidity, d.cpuUsage]);
+        state.iotSeen = true;
+    } else if (ev.type === 'SYSTEM' && ev.sources) {
+        state.sources = ev.sources;
+        if (ev.sources.crypto?.state === 'degraded') {
+            state.lastFetchFailed = true;
+            state.lastFetchError = ev.sources.crypto.lastError ?? '';
+        }
+        renderSourceNotice();
+    }
+    return true;
+}
+
+/** @param {any[]} events oldest first */
+function applyEvents(events) {
+    const shown = events.filter(processEvent);
+    scroller.appendMany(shown);
+    renderCryptoState();
+    renderIotState();
+}
+
+function resetViews() {
+    scroller.clear();
+    cryptoChart.reset();
+    iotChart.reset();
+    worker.postMessage({ type: 'RESET' });
+    state.lastCryptoTs = 0;
+    state.lastPrice = null;
+    state.iotSeen = false;
+    for (const node of [...el.prices, el.avgTemp, el.avgHumidity, el.avgCpu]) node.textContent = '—';
+    el.anomalyText.textContent = 'None';
+    el.anomalyTile.classList.remove('tile-alert');
+}
+
+// ---------------------------------------------------------------- data loading
+
+/** @param {string} url @param {AbortSignal} [signal] */
+async function getJson(url, signal) {
+    const res = await fetch(url, { signal, headers: { Accept: 'application/json' } });
+    const body = await res.json().catch(() => null);
+    if (!res.ok || body?.status !== 'success') {
+        throw new Error(body?.message ?? `HTTP ${res.status}`);
+    }
+    return body;
+}
+
+let loadGeneration = 0;
+
+async function loadRecent() {
+    const generation = ++loadGeneration;
+    const current = () => generation === loadGeneration && state.mode === 'live';
+    state.loadingRecent = true;
+    state.pending = [];
+    try {
+        const [history, status] = await Promise.all([
+            getJson(`/api/history?limit=${RECENT_LIMIT}`),
+            getJson('/api/status').catch(() => null),
+        ]);
+        if (!current()) return;
+        if (status) {
+            state.sources = status.data;
+            if (status.data.crypto?.state === 'degraded') {
+                state.lastFetchFailed = true;
+                state.lastFetchError = status.data.crypto.lastError ?? '';
+            }
+            renderSourceNotice();
+        }
+        applyEvents(history.data);
+    } catch (err) {
+        if (current()) toast(`Could not load recent events: ${err instanceof Error ? err.message : err}`);
+    } finally {
+        if (generation === loadGeneration) {
+            state.loadingRecent = false;
+            if (state.mode === 'live') {
+                const lastTs = scroller.length ? scroller.itemAt(0).timestamp : 0;
+                applyEvents(state.pending.filter((e) => e.timestamp > lastTs || e.type === 'SYSTEM'));
+            }
+            state.pending = [];
+        }
+    }
+}
+
+/** @param {number} minutesAgo */
+async function loadHistory(minutesAgo) {
+    state.historyAbort?.abort();
+    const controller = new AbortController();
+    state.historyAbort = controller;
+
+    const end = Date.now() - minutesAgo * 60_000;
+    const start = end - 60_000;
+    el.logEmpty.textContent = 'Loading history…';
+    try {
+        const body = await getJson(`/api/history?start=${start}&end=${end}&limit=5000`, controller.signal);
+        if (controller.signal.aborted || state.mode !== 'history') return;
+        resetViews();
+        applyEvents(body.data);
+        el.logEmpty.textContent = 'No events were recorded in this window.';
+    } catch (err) {
+        if (controller.signal.aborted) return;
+        el.logEmpty.textContent = 'Could not load history.';
+        toast(`Could not load history: ${err instanceof Error ? err.message : err}`);
+    }
+}
+
+/** @param {number} minutesAgo */
+function enterHistory(minutesAgo) {
+    state.mode = 'history';
+    state.loadingRecent = false;
+    state.pending = [];
+    loadGeneration += 1;
+    el.liveBtn.disabled = false;
+    const end = Date.now() - minutesAgo * 60_000;
+    el.sliderOutput.textContent = `${formatClock(end - 60_000)}–${formatClock(end)}`;
+    setStatus(`Viewing history (${minutesAgo} min ago)`, 'info');
+    clearTimeout(state.historyDebounce);
+    state.historyDebounce = window.setTimeout(() => void loadHistory(minutesAgo), 250);
+}
+
+function goLive() {
+    clearTimeout(state.historyDebounce);
+    state.historyAbort?.abort();
+    state.mode = 'live';
+    el.slider.value = '0';
+    el.sliderOutput.textContent = 'Live';
+    el.liveBtn.disabled = true;
+    el.logEmpty.textContent = 'No events yet.';
+    resetViews();
+    renderConnection();
+    void loadRecent();
+}
+
+// ---------------------------------------------------------------- WebSocket
+
+function renderConnection() {
+    if (state.mode === 'history') return;
+    if (ws?.readyState === WebSocket.OPEN) setStatus('Connected', 'ok');
+    else if (ws?.readyState === WebSocket.CONNECTING) setStatus('Connecting…', 'warn');
+    else setStatus(`Disconnected · retrying in ${Math.round(reconnectDelay / 1000)}s`, 'error');
+}
+
+function connect() {
+    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    ws = new WebSocket(`${protocol}//${location.host}`);
+    renderConnection();
+
+    ws.onopen = () => {
+        reconnectDelay = 1000;
+        renderConnection();
+    };
+    ws.onclose = () => {
+        renderConnection();
+        clearTimeout(reconnectTimer);
+        const delay = reconnectDelay * (0.8 + Math.random() * 0.4);
+        reconnectTimer = window.setTimeout(connect, delay);
+        reconnectDelay = Math.min(reconnectDelay * 1.5, 30_000);
+    };
+    ws.onmessage = (e) => {
+        let msg;
+        try {
+            msg = JSON.parse(e.data);
+        } catch {
+            return;
+        }
+        const events = msg.type === 'BATCH' ? msg.events : [...(msg.snapshot ?? []), msg];
+        if (!Array.isArray(events)) return;
+        state.events += events.length;
+        if (state.mode !== 'live') return;
+        if (state.loadingRecent) {
+            state.pending.push(...events);
+            return;
+        }
+        applyEvents(events);
+    };
+}
+
+// ---------------------------------------------------------------- controls & loops
+
+el.slider.addEventListener('input', () => {
+    const minutesAgo = -Number(el.slider.value);
+    if (minutesAgo === 0) goLive();
+    else enterHistory(minutesAgo);
+});
+el.liveBtn.addEventListener('click', goLive);
+$('history-form').addEventListener('submit', (e) => e.preventDefault());
+
+let lastTick = performance.now();
+setInterval(() => {
+    const now = performance.now();
+    const seconds = (now - lastTick) / 1000;
+    el.fps.textContent = String(Math.round(state.frames / seconds));
+    el.rate.textContent = String(Math.round(state.events / seconds));
+    state.frames = 0;
+    state.events = 0;
+    lastTick = now;
+}, 1000);
+// Re-evaluate staleness of the last price periodically.
+setInterval(renderCryptoState, 15_000);
+
+function frame() {
+    state.frames += 1;
+    iotChart.flush();
+    requestAnimationFrame(frame);
+}
+
+renderCryptoState();
+renderIotState();
+requestAnimationFrame(frame);
+void loadRecent();
+connect();
